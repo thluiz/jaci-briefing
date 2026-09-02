@@ -34,6 +34,11 @@ Delivery is through **GossipGate**, the house standard for notifications.
 has actually been sent, and moves to `plant-facts-sent.json` with the date, so
 nothing ever repeats and a failed send does not burn a fact.
 
+It is runtime state, so it is not versioned: a fresh clone seeds it from
+`plant-facts.example.json` on the first run. Versioning a file the service
+rewrites every morning would leave the tree dirty daily and conflict on any
+second machine.
+
 `populate-plant-facts.ps1` refills it:
 
 1. Picks a species from `plant-topics.json` that is not covered yet. The subject
