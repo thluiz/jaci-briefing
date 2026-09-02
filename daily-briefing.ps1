@@ -102,13 +102,14 @@ Primeiro consulte, nesta ordem:
 2. As tarefas pendentes do Todoist para hoje e as que estao atrasadas.
 
 Depois escreva UMA mensagem para o grupo, na sua voz. Regras:
-- Abra com um bom dia caloroso e proximo, de quem conhece as pessoas. Nada de "Bom dia, grupo" nem de saudacao de circular de empresa. Varie a abertura de um dia para o outro, e deixe o tom acompanhar o dia que voce acabou de ler: dia cheio pede uma coisa, agenda vazia pede outra.
-- Diga que dia e hoje.
+- Abra cumprimentando AS PESSOAS, calorosa e proxima, de quem conhece o grupo. Nunca cumprimente o dia da semana: "Bom dia, sabado!" nao faz sentido. Nada de "Bom dia, grupo", que soa a circular de empresa. Varie a abertura de um dia para o outro, e deixe o tom acompanhar o dia que voce acabou de ler: dia cheio pede uma coisa, agenda vazia pede outra.
+- Depois de cumprimentar, diga que dia e hoje.
+- Texto plano, sem NENHUMA formatacao markdown: nada de asterisco para negrito, nada de sublinhado, nada de cabecalho. O Telegram recebe isso como texto cru e os asteriscos aparecem na tela. Para destacar, use emoji ou uma linha em branco.
 - Liste os compromissos com horario. Se nao houver nenhum, diga que a agenda esta livre.
 - Liste as tarefas pendentes. Se forem muitas, cite as mais importantes e diga quantas ficaram de fora.
 - Nao invente compromisso nem tarefa. Se uma ferramenta falhar, diga com todas as letras que nao conseguiu consultar aquilo.
 - Nao inclua curiosidade sobre plantas: ela vai numa mensagem separada, logo depois desta.
-- No maximo 2500 caracteres. Texto simples, sem markdown pesado.
+- No maximo 2500 caracteres.
 - Responda apenas com a mensagem pronta, sem comentario antes ou depois.
 "@
 
@@ -118,7 +119,7 @@ Depois escreva UMA mensagem para o grupo, na sua voz. Regras:
 # One session per run, not per day. With a per-day key a second run reuses the
 # first one's context and answers from memory instead of calling the tools —
 # which is exactly how a briefing full of yesterday's data would go out.
-$sessionKey = "briefing-{0:yyyy-MM-dd-HHmm}" -f $now
+$sessionKey = "briefing-{0:yyyy-MM-dd}-{1:HHmmss}" -f $now, [DateTimeOffset]::Now
 $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($prompt))
 
 Write-Log "composing (agent=$Agent, session=$sessionKey, window=$dayStart..$dayEnd)"
@@ -147,6 +148,14 @@ if ([string]::IsNullOrWhiteSpace($text)) {
   Write-Log ("status={0} summary={1}" -f $result.status, $result.summary)
   exit 1
 }
+
+# GossipGate sends plain text, so markdown markers reach the screen as literal
+# asterisks. The prompt forbids them; this strips whatever slips through, because
+# a rule the model has to remember every morning will be broken some morning.
+$text = $text -replace '\*\*([^\*]+)\*\*', '$1'   # **bold**
+$text = $text -replace '__([^_]+)__', '$1'        # __bold__
+$text = $text -replace '(?m)^\s*#{1,6}\s+', ''    # ## headings
+$text = $text -replace '(?m)^\s*\*\s+', '• '      # * bullets
 
 $tools = @($result.result.meta.toolSummary.tools) -join ", "
 Write-Log ("composed {0} chars, tools used: {1}" -f $text.Length, $(if ($tools) { $tools } else { "none" }))
