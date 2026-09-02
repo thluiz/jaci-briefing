@@ -77,6 +77,12 @@ $dayLabel  = $now.ToString("dddd, d 'de' MMMM 'de' yyyy", $ptCulture)
 # The file is a queue, not a rotation: the fact is consumed once it has actually
 # been sent, so nothing ever repeats. The fact itself is never generated here —
 # populate-plant-facts.ps1 writes it from a real article, this only relays it.
+# The queue is runtime state, not source: a fresh clone seeds it from the
+# example instead of failing at 07:00 on a missing file.
+if (-not (Test-Path $FactsPath)) {
+  Copy-Item (Join-Path $Root "plant-facts.example.json") $FactsPath
+  Write-Log "seeded plant-facts.json from the example"
+}
 $factPool = @((Get-Content $FactsPath -Raw -Encoding utf8 | ConvertFrom-Json).facts)
 $fact = if ($factPool.Count -gt 0) { $factPool | Get-Random } else { $null }
 

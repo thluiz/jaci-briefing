@@ -4,6 +4,9 @@ plant-facts-sent.json
 state/
 
 # Nothing here should ever hold a credential — the GossipGate key is read from
-# C:\Users\conta\.gossipgate\api-key at runtime and never written to this tree.
+# %USERPROFILE%\.gossipgate\api-key at runtime and never written to this tree.
 *.key
 .env
+
+# Runtime queue: consumed as facts are sent. Seed it from plant-facts.example.json.
+plant-facts.json
