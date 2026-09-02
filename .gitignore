@@ -1,0 +1,9 @@
+# Runtime state and output, not source.
+logs/
+plant-facts-sent.json
+state/
+
+# Nothing here should ever hold a credential — the GossipGate key is read from
+# C:\Users\conta\.gossipgate\api-key at runtime and never written to this tree.
+*.key
+.env
