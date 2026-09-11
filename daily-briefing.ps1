@@ -69,6 +69,10 @@ $sign   = if ($now.Offset.Ticks -lt 0) { "-" } else { "+" }
 $offset = "{0}{1:00}:{2:00}" -f $sign, [Math]::Abs($now.Offset.Hours), [Math]::Abs($now.Offset.Minutes)
 $dayStart = "{0:yyyy-MM-dd}T00:00:00{1}" -f $now, $offset
 $dayEnd   = "{0:yyyy-MM-dd}T23:59:59{1}" -f $now, $offset
+# Same reasoning as dayStart/dayEnd: the window for "what's new in the Scholion
+# places collection" is midnight of the previous day, computed here rather than
+# left for the model to work out.
+$yesterday = "{0:yyyy-MM-dd}" -f $now.AddDays(-1)
 
 $ptCulture = [System.Globalization.CultureInfo]::GetCultureInfo("pt-BR")
 $dayLabel  = $now.ToString("dddd, d 'de' MMMM 'de' yyyy", $ptCulture)
@@ -110,17 +114,32 @@ Monte o recado matinal do grupo. Hoje e $dayLabel.
 Primeiro consulte, nesta ordem:
 1. calendar-gate__search_events com time_min "$dayStart" e time_max "$dayEnd", para os compromissos de hoje.
 2. As tarefas pendentes do Todoist para hoje e as que estao atrasadas.
+3. places-oficina__places_search com updated_since "$yesterday" e limit 50, para os locais do Scholion
+   (flores, restaurantes) que foram criados ou alterados desde ontem. Isso e sobre o REGISTO ter mudado,
+   nao sobre quando a visita aconteceu — um local editado hoje aparece mesmo que a visita nele seja antiga.
 
-Depois escreva UMA mensagem para o grupo, na sua voz. Regras:
+Depois escreva a resposta em ATE DUAS PARTES, nesta ordem exata:
+
+PARTE 1 — o recado de hoje (agenda + tarefas), na sua voz. Regras:
 - Abra cumprimentando AS PESSOAS, calorosa e proxima, de quem conhece o grupo. Nunca cumprimente o dia da semana: "Bom dia, sabado!" nao faz sentido. Nada de "Bom dia, grupo", que soa a circular de empresa. Varie a abertura de um dia para o outro, e deixe o tom acompanhar o dia que voce acabou de ler: dia cheio pede uma coisa, agenda vazia pede outra.
 - Depois de cumprimentar, diga que dia e hoje.
 - Texto plano, sem NENHUMA formatacao markdown: nada de asterisco para negrito, nada de sublinhado, nada de cabecalho. O Telegram recebe isso como texto cru e os asteriscos aparecem na tela. Para destacar, use emoji ou uma linha em branco.
 - Liste os compromissos com horario. Se nao houver nenhum, diga que a agenda esta livre.
 - Liste as tarefas pendentes. Se forem muitas, cite as mais importantes e diga quantas ficaram de fora.
 - Nao invente compromisso nem tarefa. Se uma ferramenta falhar, diga com todas as letras que nao conseguiu consultar aquilo.
-- Nao inclua curiosidade sobre plantas: ela vai numa mensagem separada, logo depois desta.
+- Nao inclua curiosidade sobre plantas nem os locais do Scholion: cada um vai numa mensagem separada.
 - No maximo 2500 caracteres.
-- Responda apenas com a mensagem pronta, sem comentario antes ou depois.
+
+PARTE 2 — SOMENTE SE places_search trouxe pelo menos um resultado. Se nao trouxe nenhum, NAO escreva
+PARTE 2 nem a linha separadora abaixo — pare depois da parte 1.
+Se trouxe: escreva uma linha contendo exatamente ###LOCAIS### e depois, em texto plano sem markdown,
+uma mensagem curta comecando com o emoji 📍, listando cada local encontrado: o nome, se e um local NOVO
+(created dentro da janela desde ontem) ou um local ATUALIZADO (created mais antigo que updated), o
+endereco quando houver, e o link da pagina dele no Scholion — monte o link a partir do slug que a
+ferramenta devolveu, como https://scholion.thluiz.com/places/<slug>/ (nao invente slug: use exatamente o
+que veio no resultado). Nao invente local nenhum: liste so o que a ferramenta devolveu.
+
+Responda apenas com a(s) parte(s), sem comentario antes ou depois.
 "@
 
 # ── Jaci composes ───────────────────────────────────────────────────────────
@@ -162,13 +181,24 @@ if ([string]::IsNullOrWhiteSpace($text)) {
 # GossipGate sends plain text, so markdown markers reach the screen as literal
 # asterisks. The prompt forbids them; this strips whatever slips through, because
 # a rule the model has to remember every morning will be broken some morning.
-$text = $text -replace '\*\*([^\*]+)\*\*', '$1'   # **bold**
-$text = $text -replace '__([^_]+)__', '$1'        # __bold__
-$text = $text -replace '(?m)^\s*#{1,6}\s+', ''    # ## headings
-$text = $text -replace '(?m)^\s*\*\s+', '• '      # * bullets
+function Strip-Markdown([string]$Body) {
+  $Body = $Body -replace '\*\*([^\*]+)\*\*', '$1'   # **bold**
+  $Body = $Body -replace '__([^_]+)__', '$1'        # __bold__
+  $Body = $Body -replace '(?m)^\s*#{1,6}\s+', ''    # ## headings
+  $Body = $Body -replace '(?m)^\s*\*\s+', '• '      # * bullets
+  return $Body
+}
+
+# The reply carries up to two parts, split on the delimiter the prompt asked
+# for. No delimiter means no places update today — that's the expected shape
+# on a quiet day, not a parsing failure.
+$sections = @($text -split '(?m)^\s*###LOCAIS###\s*$', 2)
+$briefingText = Strip-Markdown($sections[0].Trim())
+$placesText = if ($sections.Count -gt 1 -and $sections[1].Trim()) { Strip-Markdown($sections[1].Trim()) } else { $null }
 
 $tools = @($result.result.meta.toolSummary.tools) -join ", "
-Write-Log ("composed {0} chars, tools used: {1}" -f $text.Length, $(if ($tools) { $tools } else { "none" }))
+Write-Log ("composed {0} chars (briefing) + {1} chars (locais), tools used: {2}" -f `
+  $briefingText.Length, $(if ($placesText) { $placesText.Length } else { 0 }), $(if ($tools) { $tools } else { "none" }))
 if (-not $tools) {
   # A briefing that reached no tool has no data in it. Say so in the log rather
   # than sending a cheerful empty message every morning without anyone noticing.
@@ -197,12 +227,17 @@ function Split-Message([string]$Body, [int]$Limit) {
   return $chunks
 }
 
-$parts = @(Split-Message -Body $text -Limit $MaxChars)
+$parts = @(Split-Message -Body $briefingText -Limit $MaxChars)
 if ($parts.Count -gt 1) {
   for ($i = 0; $i -lt $parts.Count; $i++) {
     $parts[$i] = "({0}/{1})`n{2}" -f ($i + 1), $parts.Count, $parts[$i]
   }
 }
+
+# The places update, when there is one, rides between the briefing and the
+# curiosity — its own message, so it never fights the briefing for the
+# Telegram limit.
+if ($placesText) { $parts += @(Split-Message -Body $placesText -Limit $MaxChars) }
 
 # The curiosity is the last message of the sequence.
 if ($curiosityMessage) { $parts += $curiosityMessage }
