@@ -1,7 +1,8 @@
 # jaci-briefing
 
 The 07:00 message Jaci sends every morning: today's calendar, the pending
-Todoist tasks, and a plant curiosity. Windows Task Scheduler drives it,
+Todoist tasks, places added or updated in the Scholion collection since
+yesterday, and a plant curiosity. Windows Task Scheduler drives it,
 `\Claude\JaciDailyBriefing`.
 
 ```
@@ -13,18 +14,33 @@ pwsh -NoProfile -File E:\jaci-briefing\populate-plant-facts.ps1 -Count 10 -Previ
 ## Who writes what
 
 **Jaci writes the briefing**, through her own MCP tools — `calendar-gate` for
-the agenda and `todoist` for the tasks. The script only hands her the day's
-window and collects the reply, so the message arrives in her voice and reads
-the same APIs an agent would read on demand.
+the agenda, `todoist` for the tasks, and `places-oficina` (the `scholion-places`
+MCP) for what changed in the places collection. The script only hands her the
+day's window and collects the reply, so the message arrives in her voice and
+reads the same APIs an agent would read on demand.
+
+The places check asks `places_search` for `updated_since` yesterday — that
+filters on when the *record* was created or changed, not on when a visit
+happened, so an edited place shows up even without a fresh sighting. Jaci
+answers in up to two parts, separated by a `###LOCAIS###` line the script
+splits on: the briefing, and — only if something actually changed — a short
+"📍" message naming each place, whether it is new or updated, and its
+Scholion page (`https://scholion.thluiz.com/places/<slug>/`, built from the
+slug the tool returned — no lookup needed, the site uses Hugo's default
+permalink for that section). Nothing
+changed since yesterday means no third message at all, the same way an empty
+fact queue means no curiosity: silence over a daily "nothing to report".
 
 **The script writes nothing about plants.** The curiosity is relayed verbatim
 from `plant-facts.json` and never passes through the model on the way out.
 That is the point: a model asked for a botanical fact produces a plausible one,
 and a briefing that invents is worse than a briefing without a curiosity.
 
-The two go out as **separate messages** — the curiosity cannot push the
-briefing past Telegram's 4096-character limit, and a long agenda is split into
-numbered parts.
+The parts go out as **separate messages** — the curiosity cannot push the
+briefing past Telegram's 4096-character limit, a long agenda is split into
+numbered parts, and the places update stays its own message so it never
+competes with either for room. Order is always briefing → places (if any) →
+curiosity (if any).
 
 Delivery is through **GossipGate**, the house standard for notifications.
 

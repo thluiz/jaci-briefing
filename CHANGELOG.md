@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-11 (3)
+
+- The places message now links each place to its Scholion page
+  (`https://scholion.thluiz.com/places/<slug>/`), built from the slug
+  `places_search` already returns — no extra lookup, just Hugo's default
+  permalink for that site's `places` section.
+
+## 2026-09-11 (2)
+
+- Added a third message: places added or updated in the Scholion collection
+  (`scholion-places`) since yesterday. Jaci queries `places-oficina__places_search`
+  with `updated_since` (a new filter added to `scholion-places` itself — see that
+  repo's changelog — that asks about the record, not the last visit) and reports
+  in a second part of her reply, split off by a `###LOCAIS###` delimiter the
+  script parses. Sent only when there is something to report; a quiet day stays
+  at two messages, same as an empty plant-fact queue skips the curiosity.
+
 ## 2026-09-11
 
 - Refilled the fact queue: 10 new curiosities pulled and grounding-checked from Wikipedia (queue went from 8 to 18 entries).
