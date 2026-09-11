@@ -90,7 +90,11 @@ $fact = if ($factPool.Count -gt 0) { $factPool | Get-Random } else { $null }
 # cannot push it past the Telegram limit, and the text never passes through the
 # model, so it cannot come out reworded.
 if ($fact) {
-  $curiosityMessage = "🌿 Curiosidade do dia`n`n$($fact.fact)`n`nFonte: $($fact.source)$(if ($fact.url) { "`n$($fact.url)" })"
+  # The image goes right after the fact, before the source line, so it is the
+  # first link in the message and Telegram unfurls it as the preview instead
+  # of the plain source URL.
+  $imageBlock = if ($fact.image) { "`n`n$($fact.image)" } else { "" }
+  $curiosityMessage = "🌿 Curiosidade do dia`n`n$($fact.fact)$imageBlock`n`nFonte: $($fact.source)$(if ($fact.url) { "`n$($fact.url)" })"
   Write-Log ("plant of the day: {0} | {1} in the queue" -f $fact.source, $factPool.Count)
 } else {
   # Empty queue: the briefing still goes out, without a curiosity. Inventing one
@@ -248,6 +252,7 @@ if ($fact) {
     fact   = $fact.fact
     source = $fact.source
     url    = $fact.url
+    image  = $fact.image
   }
   @{ sent = $history } | ConvertTo-Json -Depth 5 | Set-Content -Path $SentPath -Encoding utf8
 

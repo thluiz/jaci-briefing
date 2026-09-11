@@ -45,14 +45,33 @@ $SentPath   = Join-Path $Root "plant-facts-sent.json"
 $ChatUrl    = "http://localhost:8080/api/vox-intelligence/v1/chat/completions"
 $UserAgent  = "jaci-briefing/1.0 (personal automation; contact via github.com/thluiz)"
 
+# Fetching an article and then its image for each of ~10 topics in a row is
+# enough traffic to trip Wikipedia's rate limit (HTTP 429) mid-run. A single
+# retry loop backs off and retries instead of the call silently coming back
+# empty and the topic being skipped for no real reason.
+function Invoke-WikipediaApi([string]$Url) {
+  for ($attempt = 1; $attempt -le 4; $attempt++) {
+    try {
+      return Invoke-RestMethod -Uri $Url -TimeoutSec 25 -Headers @{ "User-Agent" = $UserAgent }
+    } catch {
+      $status = $_.Exception.Response.StatusCode.value__
+      if ($status -eq 429 -and $attempt -lt 4) {
+        $wait = 5 * [Math]::Pow(2, $attempt - 1) # 5s, 10s, 20s
+        Write-Host "  rate limited by Wikipedia, waiting $($wait)s..." -ForegroundColor Yellow
+        Start-Sleep -Seconds $wait
+        continue
+      }
+      return $null
+    }
+  }
+  return $null
+}
+
 function Get-WikipediaArticle([string]$Title) {
   foreach ($lang in @("pt", "en")) {
     $url = "https://{0}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&exsectionformat=plain&redirects=1&format=json&titles={1}" -f $lang, [uri]::EscapeDataString($Title)
-    try {
-      $r = Invoke-RestMethod -Uri $url -TimeoutSec 25 -Headers @{ "User-Agent" = $UserAgent }
-    } catch {
-      continue
-    }
+    $r = Invoke-WikipediaApi -Url $url
+    if (-not $r) { continue }
     $page = $r.query.pages.PSObject.Properties.Value | Select-Object -First 1
     if (-not $page -or $page.missing -ne $null) { continue }
     if (-not $page.extract -or $page.extract.Length -lt 600) { continue }
@@ -64,6 +83,18 @@ function Get-WikipediaArticle([string]$Title) {
     }
   }
   return $null
+}
+
+function Get-WikipediaImage([string]$Title, [string]$Lang) {
+  # The page's own lead image — already curated by Wikipedia editors as the
+  # one photo that represents the article, which is a better bet than trying
+  # to pick a "good" one out of the raw image gallery ourselves.
+  $url = "https://{0}.wikipedia.org/w/api.php?action=query&prop=pageimages&piprop=thumbnail&pithumbsize=1024&redirects=1&format=json&titles={1}" -f $Lang, [uri]::EscapeDataString($Title)
+  $r = Invoke-WikipediaApi -Url $url
+  if (-not $r) { return $null }
+  $page = $r.query.pages.PSObject.Properties.Value | Select-Object -First 1
+  if (-not $page -or -not $page.thumbnail) { return $null }
+  return $page.thumbnail.source
 }
 
 function Get-FactFromArticle($Article) {
@@ -146,8 +177,11 @@ foreach ($t in $pool) {
   $fact = Get-FactFromArticle -Article $article
   if (-not $fact) { continue }
 
+  Start-Sleep -Milliseconds 500 # stay under Wikipedia's rate limit across the run
+  $fact.image = Get-WikipediaImage -Title $article.title -Lang $article.lang
   Write-Host "  fato : $($fact.fact)" -ForegroundColor Green
   Write-Host "  base : $($fact.quote.Substring(0, [Math]::Min(120, $fact.quote.Length)))..."
+  Write-Host "  img  : $(if ($fact.image) { $fact.image } else { '(none found)' })"
   $added += $fact
 }
 
@@ -165,7 +199,7 @@ $current = @()
 if (Test-Path $FactsPath) { $current = @((Get-Content $FactsPath -Raw -Encoding utf8 | ConvertFrom-Json).facts) }
 # The quote stays out of the file: it did its job at validation time, and the
 # briefing has no use for it.
-$current += @($added | ForEach-Object { [ordered]@{ fact = $_.fact; source = $_.source; url = $_.url } })
+$current += @($added | ForEach-Object { [ordered]@{ fact = $_.fact; source = $_.source; url = $_.url; image = $_.image } })
 @{ facts = $current } | ConvertTo-Json -Depth 5 | Set-Content -Path $FactsPath -Encoding utf8
 
 Write-Host "`nAdded $($added.Count). Queue now holds $($current.Count) facts." -ForegroundColor Green
