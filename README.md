@@ -50,6 +50,11 @@ second machine.
    from the article that supports it**.
 4. **Rejects the fact if that sentence is not in the article.** The check is
    mechanical: an instruction in the prompt is not evidence.
+5. Pulls the article's own lead image (`pageimages`/`thumbnail`), already
+   curated by Wikipedia editors, and stores its URL alongside the fact. The
+   briefing puts that URL first in the curiosity message so Telegram unfurls
+   it as the preview; no image is sent as an attachment. When an article has
+   no lead image, the fact still goes out, without a picture.
 
 Known limit: it verifies the quoted sentence exists, not that the fact follows
 from it. Run with `-Preview` and read before writing.
