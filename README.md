@@ -23,13 +23,25 @@ The places check asks `places_search` for `updated_since` yesterday — that
 filters on when the *record* was created or changed, not on when a visit
 happened, so an edited place shows up even without a fresh sighting. Jaci
 answers in up to two parts, separated by a `###LOCAIS###` line the script
-splits on: the briefing, and — only if something actually changed — a short
-"📍" message naming each place, whether it is new or updated, and its
-Scholion page (`https://scholion.thluiz.com/places/<slug>/`, built from the
-slug the tool returned — no lookup needed, the site uses Hugo's default
-permalink for that section). Nothing
-changed since yesterday means no third message at all, the same way an empty
-fact queue means no curiosity: silence over a daily "nothing to report".
+splits on: the briefing, and — only if something actually changed — one
+short "📍" message **per place**, each naming that place, whether it is new
+or updated, and its Scholion page (`https://scholion.thluiz.com/places/<slug>/`,
+built from the slug the tool returned — no lookup needed, the site uses
+Hugo's default permalink for that section). Nothing changed since yesterday
+means no places messages at all, the same way an empty fact queue means no
+curiosity: silence over a daily "nothing to report".
+
+Places are one message each, not a combined list, so each can carry its own
+cover photo: for every place found, Jaci calls `place_get` to check for a
+photo, and if one exists its URL (`https://scholion.thluiz.com/places/<slug>/<file>`,
+the page-bundle photo sitting next to that place's `index.md`) goes first in
+that place's message, ahead of its own page link, so Telegram unfurls the
+photo as the preview — same trick as the plant curiosity's image. A single
+combined message would only ever unfurl the first link in it; splitting one
+message per place is what lets every place with a photo actually show one.
+A place with no photo yet just gets no cover; nothing is invented to fill the
+gap. The script splits Jaci's reply on a `###LOCAL###` line between blocks —
+one send to GossipGate per place.
 
 **The script writes nothing about plants.** The curiosity is relayed verbatim
 from `plant-facts.json` and never passes through the model on the way out.
@@ -38,9 +50,10 @@ and a briefing that invents is worse than a briefing without a curiosity.
 
 The parts go out as **separate messages** — the curiosity cannot push the
 briefing past Telegram's 4096-character limit, a long agenda is split into
-numbered parts, and the places update stays its own message so it never
-competes with either for room. Order is always briefing → places (if any) →
-curiosity (if any).
+numbered parts, and each changed place is its own message so none of them
+compete with each other, or with the briefing, for room (or for the one
+link-preview Telegram is willing to unfurl). Order is always briefing →
+one message per changed place (if any) → curiosity (if any).
 
 Delivery is through **GossipGate**, the house standard for notifications.
 

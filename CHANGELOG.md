@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-12
+
+- Each changed place is now its own message instead of one combined list:
+  Jaci calls `place_get` for every place `places_search` returned, and any
+  place with a photo leads its own message with that photo's URL
+  (`https://scholion.thluiz.com/places/<slug>/<file>`, from the photo's
+  `file` field), so Telegram unfurls it as a preview — same trick as the
+  plant curiosity's image. Splitting per place is what lets more than one
+  cover photo show up in a day; a single shared message would only ever
+  unfurl its first link. The script now splits Jaci's reply on a new
+  `###LOCAL###` delimiter between place blocks and sends each separately.
+  A place with no photo just gets no cover — nothing invented to fill it.
+
 ## 2026-09-11 (3)
 
 - The places message now links each place to its Scholion page
