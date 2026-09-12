@@ -132,12 +132,23 @@ PARTE 1 — o recado de hoje (agenda + tarefas), na sua voz. Regras:
 
 PARTE 2 — SOMENTE SE places_search trouxe pelo menos um resultado. Se nao trouxe nenhum, NAO escreva
 PARTE 2 nem a linha separadora abaixo — pare depois da parte 1.
-Se trouxe: escreva uma linha contendo exatamente ###LOCAIS### e depois, em texto plano sem markdown,
-uma mensagem curta comecando com o emoji 📍, listando cada local encontrado: o nome, se e um local NOVO
-(created dentro da janela desde ontem) ou um local ATUALIZADO (created mais antigo que updated), o
-endereco quando houver, e o link da pagina dele no Scholion — monte o link a partir do slug que a
-ferramenta devolveu, como https://scholion.thluiz.com/places/<slug>/ (nao invente slug: use exatamente o
-que veio no resultado). Nao invente local nenhum: liste so o que a ferramenta devolveu.
+Se trouxe: para CADA local encontrado, chame places-oficina__place_get com o slug dele para ver as fotos
+registradas. Se o local tiver ao menos uma foto, monte a URL dela como
+https://scholion.thluiz.com/places/<slug>/<file>, usando exatamente o slug e o campo "file" da foto que a
+ferramenta devolveu — nunca invente nome de arquivo nem escolha uma foto que nao veio na resposta. Se o
+local nao tiver foto nenhuma, siga sem imagem de capa para ele — cada local e independente dos outros.
+
+Depois escreva uma linha contendo exatamente ###LOCAIS### e, na parte de texto plano sem markdown, UM
+BLOCO POR LOCAL, cada um vira a MENSAGEM daquele local sozinho (sera enviada separada das demais, e e
+por isso que cada uma pode ter sua propria foto de capa). Cada bloco segue este formato: se aquele local
+tem foto, a URL dela sozinha na primeira linha (assim o Telegram usa essa foto como preview daquela
+mensagem); depois uma linha em branco; depois o texto comecando com 📍: o nome do local, se e NOVO
+(created dentro da janela desde ontem) ou ATUALIZADO (created mais antigo que updated), o endereco quando
+houver, e o link da pagina dele no Scholion — monte o link a partir do slug que a ferramenta devolveu,
+como https://scholion.thluiz.com/places/<slug>/ (nao invente slug: use exatamente o que veio no
+resultado). Separe um bloco do proximo com uma linha contendo exatamente ###LOCAL###, sem nada antes nem
+depois dela nessa linha. Nao invente local nenhum: um bloco para cada local que a ferramenta devolveu, nem
+mais nem menos.
 
 Responda apenas com a(s) parte(s), sem comentario antes ou depois.
 "@
@@ -196,9 +207,16 @@ $sections = @($text -split '(?m)^\s*###LOCAIS###\s*$', 2)
 $briefingText = Strip-Markdown($sections[0].Trim())
 $placesText = if ($sections.Count -gt 1 -and $sections[1].Trim()) { Strip-Markdown($sections[1].Trim()) } else { $null }
 
+# Each place is its own message, not one combined list: that's what lets each
+# one carry its own cover photo as a Telegram preview instead of only the first
+# link in a shared message getting unfurled.
+$placeMessages = if ($placesText) {
+  @($placesText -split '(?m)^\s*###LOCAL###\s*$' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+} else { @() }
+
 $tools = @($result.result.meta.toolSummary.tools) -join ", "
-Write-Log ("composed {0} chars (briefing) + {1} chars (locais), tools used: {2}" -f `
-  $briefingText.Length, $(if ($placesText) { $placesText.Length } else { 0 }), $(if ($tools) { $tools } else { "none" }))
+Write-Log ("composed {0} chars (briefing) + {1} local message(s), tools used: {2}" -f `
+  $briefingText.Length, $placeMessages.Count, $(if ($tools) { $tools } else { "none" }))
 if (-not $tools) {
   # A briefing that reached no tool has no data in it. Say so in the log rather
   # than sending a cheerful empty message every morning without anyone noticing.
@@ -235,9 +253,9 @@ if ($parts.Count -gt 1) {
 }
 
 # The places update, when there is one, rides between the briefing and the
-# curiosity — its own message, so it never fights the briefing for the
-# Telegram limit.
-if ($placesText) { $parts += @(Split-Message -Body $placesText -Limit $MaxChars) }
+# curiosity — one message per place, so each keeps its own cover photo as the
+# first (and only) link Telegram has to unfurl for that message.
+foreach ($placeMessage in $placeMessages) { $parts += @(Split-Message -Body $placeMessage -Limit $MaxChars) }
 
 # The curiosity is the last message of the sequence.
 if ($curiosityMessage) { $parts += $curiosityMessage }
