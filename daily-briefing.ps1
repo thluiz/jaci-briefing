@@ -77,6 +77,18 @@ $yesterday = "{0:yyyy-MM-dd}" -f $now.AddDays(-1)
 $ptCulture = [System.Globalization.CultureInfo]::GetCultureInfo("pt-BR")
 $dayLabel  = $now.ToString("dddd, d 'de' MMMM 'de' yyyy", $ptCulture)
 
+# Whether today closes the invoice count: day 15, or the second-to-last day of
+# the month. Computed here, not left to the model, for the same reason as the
+# calendar window above — and because DaysInMonth already handles every month
+# length correctly, there is no "what if February" edge case to get wrong.
+$daysInMonth   = [DateTime]::DaysInMonth($now.Year, $now.Month)
+$isInvoiceDay  = ($now.Day -eq 15) -or ($now.Day -eq ($daysInMonth - 1))
+$invoiceMonthLabel  = $now.ToString("MMMM 'de' yyyy", $ptCulture)
+# The exact dates to check, day 1 through today — built here so Jaci never has
+# to compute "which dates are in this month so far" herself, and never has to
+# guess a page size that might not reach back far enough on a busy month.
+$invoiceDatesList = ((1..$now.Day) | ForEach-Object { "- {0:yyyy-MM}-{1:00}" -f $now, $_ }) -join "`n"
+
 # ── the plant of the day ────────────────────────────────────────────────────
 # The file is a queue, not a rotation: the fact is consumed once it has actually
 # been sent, so nothing ever repeats. The fact itself is never generated here —
@@ -107,6 +119,36 @@ if ($fact) {
   $curiosityMessage = $null
 }
 
+# ── the invoice count, on the 15th and the second-to-last day of the month ──
+# No tool here returns a monthly total directly, so the instruction tells Jaci
+# how to build one from what does exist: weoinvoice_faturas_do_dia is the
+# day-close tool ("quanto vendi hoje"), so the monthly total is a sum of one
+# call per day, not a guess at how many "ultimas" cover the month — a page-size
+# heuristic can undercount silently on a busy month, a day-by-day sum cannot.
+$invoiceStep = if ($isInvoiceDay) {
+@"
+
+4. weoinvoice__weoinvoice_faturas_do_dia, uma vez para CADA uma destas datas (uma chamada por data, nao
+   pule nenhuma):
+$invoiceDatesList
+   Cada resposta traz um campo "quantidade" (numero de notas naquele dia) e um campo "total" (valor
+   emitido naquele dia). Some "quantidade" de todas as datas para o total de notas de $invoiceMonthLabel,
+   e some "total" de todas as datas para o valor total.
+"@
+} else { "" }
+
+$invoicePart = if ($isInvoiceDay) {
+@"
+
+PARTE EXTRA — hoje e dia de reportar as notas fiscais (dia 15 ou penultimo dia do mes). Escreva uma linha
+contendo exatamente ###NOTAFISCAL### logo depois da PARTE 1 e antes de qualquer ###LOCAIS###, e depois
+dela um paragrafo curto, texto plano, dizendo quantas notas fiscais foram emitidas em $invoiceMonthLabel
+até hoje e o valor total somado (em euros), deixando claro que e um fechamento parcial do mes (a menos que
+hoje seja mesmo o ultimo dia dele). Nao invente numero nenhum: se a consulta do passo 4 falhar ou vier
+inconsistente, diga com todas as letras que nao conseguiu apurar o total, sem estimar um valor.
+"@
+} else { "" }
+
 # ── the prompt ──────────────────────────────────────────────────────────────
 $prompt = @"
 Monte o recado matinal do grupo. Hoje e $dayLabel.
@@ -116,9 +158,9 @@ Primeiro consulte, nesta ordem:
 2. As tarefas pendentes do Todoist para hoje e as que estao atrasadas.
 3. places-oficina__places_search com updated_since "$yesterday" e limit 50, para os locais do Scholion
    (flores, restaurantes) que foram criados ou alterados desde ontem. Isso e sobre o REGISTO ter mudado,
-   nao sobre quando a visita aconteceu — um local editado hoje aparece mesmo que a visita nele seja antiga.
+   nao sobre quando a visita aconteceu — um local editado hoje aparece mesmo que a visita nele seja antiga.$invoiceStep
 
-Depois escreva a resposta em ATE DUAS PARTES, nesta ordem exata:
+Depois escreva a resposta em ATE TRES PARTES, nesta ordem exata:
 
 PARTE 1 — o recado de hoje (agenda + tarefas), na sua voz. Regras:
 - Abra cumprimentando AS PESSOAS, calorosa e proxima, de quem conhece o grupo. Nunca cumprimente o dia da semana: "Bom dia, sabado!" nao faz sentido. Nada de "Bom dia, grupo", que soa a circular de empresa. Varie a abertura de um dia para o outro, e deixe o tom acompanhar o dia que voce acabou de ler: dia cheio pede uma coisa, agenda vazia pede outra.
@@ -127,9 +169,9 @@ PARTE 1 — o recado de hoje (agenda + tarefas), na sua voz. Regras:
 - Liste os compromissos com horario. Se nao houver nenhum, diga que a agenda esta livre.
 - Liste as tarefas pendentes. Se forem muitas, cite as mais importantes e diga quantas ficaram de fora.
 - Nao invente compromisso nem tarefa. Se uma ferramenta falhar, diga com todas as letras que nao conseguiu consultar aquilo.
-- Nao inclua curiosidade sobre plantas nem os locais do Scholion: cada um vai numa mensagem separada.
+- Nao inclua curiosidade sobre plantas, os locais do Scholion, nem notas fiscais: cada um vai numa mensagem separada.
 - No maximo 2500 caracteres.
-
+$invoicePart
 PARTE 2 — SOMENTE SE places_search trouxe pelo menos um resultado. Se nao trouxe nenhum, NAO escreva
 PARTE 2 nem a linha separadora abaixo — pare depois da parte 1.
 Se trouxe: para CADA local encontrado, chame places-oficina__place_get com o slug dele para ver as fotos
@@ -200,12 +242,23 @@ function Strip-Markdown([string]$Body) {
   return $Body
 }
 
-# The reply carries up to two parts, split on the delimiter the prompt asked
-# for. No delimiter means no places update today — that's the expected shape
-# on a quiet day, not a parsing failure.
+# The reply carries up to three parts, split on the delimiters the prompt asked
+# for. ###NOTAFISCAL### always comes before ###LOCAIS### when both are present
+# (the prompt fixes that order), so splitting on LOCAIS first and then on
+# NOTAFISCAL within what's left of the briefing side is unambiguous. Neither
+# delimiter present is the expected shape on a day that is not an invoice day
+# and had no places update — not a parsing failure.
 $sections = @($text -split '(?m)^\s*###LOCAIS###\s*$', 2)
-$briefingText = Strip-Markdown($sections[0].Trim())
 $placesText = if ($sections.Count -gt 1 -and $sections[1].Trim()) { Strip-Markdown($sections[1].Trim()) } else { $null }
+
+$nfSections = @($sections[0] -split '(?m)^\s*###NOTAFISCAL###\s*$', 2)
+$briefingText = Strip-Markdown($nfSections[0].Trim())
+$invoiceText = if ($nfSections.Count -gt 1 -and $nfSections[1].Trim()) { Strip-Markdown($nfSections[1].Trim()) } else { $null }
+if ($isInvoiceDay -and -not $invoiceText) {
+  # Today is a trigger day but the reply carried no ###NOTAFISCAL### section —
+  # log it loudly rather than silently skipping the invoice message.
+  Write-Log "WARNING: today is an invoice day but the reply had no ###NOTAFISCAL### section"
+}
 
 # Each place is its own message, not one combined list: that's what lets each
 # one carry its own cover photo as a Telegram preview instead of only the first
@@ -215,8 +268,8 @@ $placeMessages = if ($placesText) {
 } else { @() }
 
 $tools = @($result.result.meta.toolSummary.tools) -join ", "
-Write-Log ("composed {0} chars (briefing) + {1} local message(s), tools used: {2}" -f `
-  $briefingText.Length, $placeMessages.Count, $(if ($tools) { $tools } else { "none" }))
+Write-Log ("composed {0} chars (briefing) + {1} local message(s) + invoice message: {2}, tools used: {3}" -f `
+  $briefingText.Length, $placeMessages.Count, [bool]$invoiceText, $(if ($tools) { $tools } else { "none" }))
 if (-not $tools) {
   # A briefing that reached no tool has no data in it. Say so in the log rather
   # than sending a cheerful empty message every morning without anyone noticing.
@@ -251,6 +304,11 @@ if ($parts.Count -gt 1) {
     $parts[$i] = "({0}/{1})`n{2}" -f ($i + 1), $parts.Count, $parts[$i]
   }
 }
+
+# The invoice total, on the 15th and the second-to-last day of the month, goes
+# out as its own message right after the briefing — same reasoning as places
+# and the curiosity: unrelated content doesn't share a message.
+if ($invoiceText) { $parts += @(Split-Message -Body $invoiceText -Limit $MaxChars) }
 
 # The places update, when there is one, rides between the briefing and the
 # curiosity — one message per place, so each keeps its own cover photo as the
