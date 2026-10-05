@@ -153,10 +153,27 @@ if (Test-Path $FactsPath) { $existing += @((Get-Content $FactsPath -Raw -Encodin
 if (Test-Path $SentPath)  { $existing += @((Get-Content $SentPath  -Raw -Encoding utf8 | ConvertFrom-Json).sent) }
 $covered = @($existing | ForEach-Object { $_.source } | Where-Object { $_ })
 
+function Get-UncoveredShuffled([string[]]$List) {
+  @($List | Where-Object { $t = $_; -not ($covered | Where-Object { $_ -like "*$t*" }) } |
+    Sort-Object { Get-Random })
+}
+
 $pool = if ($Topic) { $Topic } else {
-  @((Get-Content $TopicsPath -Raw -Encoding utf8 | ConvertFrom-Json).topics) |
-    Where-Object { $t = $_; -not ($covered | Where-Object { $_ -like "*$t*" }) } |
-    Sort-Object { Get-Random }
+  $topicsJson   = Get-Content $TopicsPath -Raw -Encoding utf8 | ConvertFrom-Json
+  $interiorPool = Get-UncoveredShuffled @($topicsJson.interior)
+  $wildPool     = Get-UncoveredShuffled @($topicsJson.topics)
+
+  # A lista "topics" (selvagem/agricola/arvores) e bem maior que "interior",
+  # entao um sorteio unico sobre as duas juntas quase nunca cairia numa planta
+  # de casa. Intercalar — interior, selvagem, interior, selvagem... — garante
+  # que cada remessa tenha as duas, em vez de depender de sorte.
+  $interleaved = @()
+  $max = [Math]::Max($interiorPool.Count, $wildPool.Count)
+  for ($i = 0; $i -lt $max; $i++) {
+    if ($i -lt $interiorPool.Count) { $interleaved += $interiorPool[$i] }
+    if ($i -lt $wildPool.Count)     { $interleaved += $wildPool[$i] }
+  }
+  $interleaved
 }
 
 if ($pool.Count -eq 0) {
