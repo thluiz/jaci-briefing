@@ -96,21 +96,46 @@ second machine.
    time on a two-line stub about some sedge.
 2. Fetches the **full** article text from Wikipedia (`action=query&prop=extracts`,
    not the REST `summary` endpoint, which returns only the lead paragraph).
-3. Asks the local LLM gateway for one surprising fact **and the exact sentence
-   from the article that supports it**.
-4. **Rejects the fact if that sentence is not in the article.** The check is
-   mechanical: an instruction in the prompt is not evidence.
-5. Pulls the article's own lead image (`pageimages`/`thumbnail`), already
+3. Asks the local LLM gateway to **choose** the most surprising passage: one to
+   three consecutive sentences, copied as they are. The model never writes the
+   fact. An earlier version had it paraphrase, and a review found 4 of 17
+   facts overstated or embellished by the rewrite.
+4. **Rejects the passage unless it is in the article character for
+   character**, and rejects it if it is in PT-EU spelling, opens in quotes
+   (the article quoting a care guide) or does not end as a sentence.
+5. Portuguese first. Many houseplants have no real pt article, so English is
+   the fallback, and its passage is translated under three gates or dropped:
+   the same numbers as the original (imperial repeats like "(5.9 in)" are
+   stripped first), Brazilian spelling, and a checker model that compares the
+   two texts. The source line says "trecho traduzido" and the English original
+   is kept in the queue next to the translation.
+6. Asks for one opening line and one closing comment, so the message does not
+   read dry. They are the only creative text. Each goes through the checker
+   model, which sees only the passage and the line and refuses any line that
+   attributes to the plant a fact the passage does not state; jokes and
+   reactions pass. A refused line gets one rewrite, told why; then it is left
+   out. In the briefing the passage goes in quotes, so the framing never passes
+   for source.
+7. Pulls the article's own lead image (`pageimages`/`thumbnail`), already
    curated by Wikipedia editors, and stores its URL alongside the fact. The
    briefing puts that URL first in the curiosity message so Telegram unfurls
    it as the preview; no image is sent as an attachment. When an article has
    no lead image, the fact still goes out, without a picture.
 
-Known limit: it verifies the quoted sentence exists, not that the fact follows
-from it. Run with `-Preview` and read before writing.
+**The queue refills itself.** When it drops to 5 or fewer, the briefing runs
+the populate script for 10 more and sends the new facts to Thiago on Claudinho
+(GossipGate `default`), each message prefixed with 🌱. The ones still queued go
+out first, so there are days to veto any of the new ones before they reach the
+group.
 
-Facts are relayed verbatim, so text in `plant-facts.json` must be correct,
-accented PT-BR.
+Two models: DeepSeek V3.2 picks and drafts, Claude Sonnet 4.5 (via OpenRouter)
+checks. On six framing lines, three of them inventions, DeepSeek cleared all
+six as checker; Sonnet 4.5 got all six right.
+
+Known limits: the passage is real, but Wikipedia itself can be wrong or clumsy,
+and the framing check is a model judging a model. The lead image is Wikipedia's
+choice and has been wrong at least once (the en article for *Syngonium
+podophyllum* leads with a *Zingiber*).
 
 ## Failure modes it was built for
 
@@ -120,8 +145,9 @@ accented PT-BR.
   the date, so a rerun re-reads the APIs instead of answering from the first
   run's context.
 - **GossipGate down.** The send fails loudly and the fact stays in the queue.
-- **Empty queue.** The briefing still goes out, without a curiosity, and the log
-  says to run the populate script.
+- **Empty queue.** The briefing still goes out, without a curiosity. The
+  refill runs at 5 or fewer, so this only happens when it fails or the topics
+  run out, and either case is reported on Claudinho.
 
 ## Configuration
 

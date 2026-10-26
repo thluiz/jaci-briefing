@@ -100,7 +100,9 @@ if (-not (Test-Path $FactsPath)) {
   Write-Log "seeded plant-facts.json from the example"
 }
 $factPool = @((Get-Content $FactsPath -Raw -Encoding utf8 | ConvertFrom-Json).facts)
-$fact = if ($factPool.Count -gt 0) { $factPool | Get-Random } else { $null }
+# Oldest first, not a random pick: a refill sends the new facts to Thiago for
+# review, and only a strict order guarantees the queued ones go out before them.
+$fact = if ($factPool.Count -gt 0) { $factPool[0] } else { $null }
 
 # It travels as its own message, after the briefing. Two reasons: the briefing
 # cannot push it past the Telegram limit, and the text never passes through the
@@ -110,7 +112,15 @@ if ($fact) {
   # first link in the message and Telegram unfurls it as the preview instead
   # of the plain source URL.
   $imageBlock = if ($fact.image) { "`n`n$($fact.image)" } else { "" }
-  $curiosityMessage = "🌿 Curiosidade do dia`n`n$($fact.fact)$imageBlock`n`nFonte: $($fact.source)$(if ($fact.url) { "`n$($fact.url)" })"
+  # The fact is a verbatim passage, so it may open with "Seu tronco..." — the
+  # plant's name in the heading is what gives it a subject.
+  $heading = if ($fact.plant) { "🌿 Curiosidade do dia: $($fact.plant)" } else { "🌿 Curiosidade do dia" }
+  # The opening and closing lines are the only text not taken from the source,
+  # so when there is either, the passage goes in quotes to keep them apart.
+  $factBody = if ($fact.hook -or $fact.comment) {
+    (@($fact.hook, "«$($fact.fact)»", $fact.comment) | Where-Object { $_ }) -join "`n`n"
+  } else { $fact.fact }
+  $curiosityMessage = "$heading`n`n$factBody$imageBlock`n`nFonte: $($fact.source)$(if ($fact.url) { "`n$($fact.url)" })"
   Write-Log ("plant of the day: {0} | {1} in the queue" -f $fact.source, $factPool.Count)
 } else {
   # Empty queue: the briefing still goes out, without a curiosity. Inventing one
@@ -359,16 +369,58 @@ if ($fact) {
     try { $history = @((Get-Content $SentPath -Raw -Encoding utf8 | ConvertFrom-Json).sent) } catch { $history = @() }
   }
   $history += [ordered]@{
-    date   = "{0:yyyy-MM-dd}" -f $now
-    fact   = $fact.fact
-    source = $fact.source
-    url    = $fact.url
-    image  = $fact.image
+    date     = "{0:yyyy-MM-dd}" -f $now
+    fact     = $fact.fact
+    original = $fact.original
+    hook     = $fact.hook
+    comment  = $fact.comment
+    plant    = $fact.plant
+    source   = $fact.source
+    url      = $fact.url
+    image    = $fact.image
   }
   @{ sent = $history } | ConvertTo-Json -Depth 5 | Set-Content -Path $SentPath -Encoding utf8
 
   Write-Log ("fact consumed, {0} left in the queue" -f $remaining.Count)
-  if ($remaining.Count -le 5) {
-    Write-Log "WARNING: fewer than 6 facts left — run populate-plant-facts.ps1"
+}
+
+# ── refill the queue before it runs dry ─────────────────────────────────────
+# Safe to do unattended because populate-plant-facts.ps1 only ever stores a
+# verbatim passage from the article. The opening and closing lines around it
+# are the one part that cannot be checked mechanically, so the new facts go to
+# Thiago's channel (GossipGate "default", Claudinho) while the ones already in
+# the queue still have days to go out first: time to veto any of them.
+$queueCount = if ($fact) { $remaining.Count } else { $factPool.Count }
+if ($queueCount -le 5) {
+  Write-Log "queue at $queueCount, refilling"
+  $before = @($(if ($fact) { $remaining } else { $factPool }) | ForEach-Object { $_.fact })
+  $populateLog = & pwsh -NoProfile -File (Join-Path $Root "populate-plant-facts.ps1") -Count 10 2>&1 | Out-String
+  $after = @((Get-Content $FactsPath -Raw -Encoding utf8 | ConvertFrom-Json).facts)
+  $new = @($after | Where-Object { $before -notcontains $_.fact })
+  Write-Log ("refill added {0}, queue now {1}" -f $new.Count, $after.Count)
+
+  $notice = if ($new.Count -gt 0) {
+    $lines = $new | ForEach-Object {
+      (@("• $($_.plant)", $_.hook, "«$($_.fact)»", $_.comment) | Where-Object { $_ }) -join "`n"
+    }
+    "🌱 Jaci: a fila de curiosidades estava com $queueCount e recebeu $($new.Count) novas. Começam a sair em uns $queueCount dias; se alguma não presta, é só pedir para tirar.`n`n" + ($lines -join "`n`n")
+  } else {
+    Write-Log $populateLog.Substring([Math]::Max(0, $populateLog.Length - 500))
+    "🌱 Jaci: a fila de curiosidades está com $queueCount e o reabastecimento não trouxe nenhuma nova. Pode ser que os assuntos de plant-topics.json tenham acabado; veja o log de hoje em E:\jaci-briefing\logs."
+  }
+
+  foreach ($part in (Split-Message $notice 3800)) {
+    # Every part carries the 🌱, so each message says where it came from.
+    if (-not $part.StartsWith("🌱")) { $part = "🌱 (cont.)`n`n$part" }
+    $body = [System.Text.Encoding]::UTF8.GetBytes((@{ message = $part } | ConvertTo-Json -Depth 3 -Compress))
+    try {
+      Invoke-RestMethod -Uri $GossipUrl -Method Post -Body $body `
+        -ContentType "application/json; charset=utf-8" `
+        -Headers @{ "X-Api-Key" = $GossipKey } | Out-Null
+    } catch {
+      Write-Log ("FAILED to send the refill notice: {0}" -f $_.Exception.Message)
+      break
+    }
+    Start-Sleep -Milliseconds 400
   }
 }

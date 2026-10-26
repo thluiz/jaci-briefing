@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-10-10
+
+- The plant curiosity is now the article's own passage, verbatim, instead of a
+  model paraphrase. A review of a refill found 4 of 17 paraphrased facts
+  overstated, embellished or misdated, and the old containment check (is the
+  supporting sentence in the article?) caught none of them. The model now only
+  chooses one to three consecutive sentences; what is stored is checked
+  character for character against the article.
+- Portuguese first, English as fallback for the houseplants with no real pt
+  article. The English passage is translated and must keep the same numbers
+  (imperial repeats stripped first), use Brazilian spelling and pass a checker
+  model comparing it to the original; the source line says "trecho traduzido".
+  Passages in PT-EU spelling, in quotes, or not ending as a sentence are dropped.
+- Around the passage, one opening line and one closing comment keep it from
+  reading dry. They are the only creative text, the passage goes in quotes so
+  they never pass for source, and Claude Sonnet 4.5 checks each against the
+  passage (DeepSeek, as checker, cleared every invention in a six-line test). A
+  refused line gets one rewrite, then is left out.
+- The queue goes out oldest first instead of at random, so a refill's new
+  facts wait behind the queued ones.
+- The message heading names the plant (`🌿 Curiosidade do dia: <planta>`),
+  since a verbatim passage may open with "Seu tronco...".
+- When the queue drops to 5 or fewer, the briefing refills it itself (10 new
+  facts) and sends the new ones to Thiago on Claudinho (GossipGate `default`),
+  prefixed with 🌱, while the queued ones still buy days to veto any of them.
+  A refill that adds nothing is reported there too.
+
 ## 2026-09-13
 
 - On the 15th and on the second-to-last day of the month (`[DateTime]::DaysInMonth`
