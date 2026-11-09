@@ -73,6 +73,10 @@ $dayEnd   = "{0:yyyy-MM-dd}T23:59:59{1}" -f $now, $offset
 # places collection" is midnight of the previous day, computed here rather than
 # left for the model to work out.
 $yesterday = "{0:yyyy-MM-dd}" -f $now.AddDays(-1)
+# Last day (inclusive) a dated task may fall on to make the briefing: today + 7.
+# Computed here for the same reason as the windows above.
+$today   = "{0:yyyy-MM-dd}" -f $now
+$weekEnd = "{0:yyyy-MM-dd}" -f $now.AddDays(7)
 
 $ptCulture = [System.Globalization.CultureInfo]::GetCultureInfo("pt-BR")
 $dayLabel  = $now.ToString("dddd, d 'de' MMMM 'de' yyyy", $ptCulture)
@@ -151,7 +155,7 @@ $invoicePart = if ($isInvoiceDay) {
 @"
 
 PARTE EXTRA — hoje e dia de reportar as notas fiscais (dia 15 ou penultimo dia do mes). Escreva uma linha
-contendo exatamente ###NOTAFISCAL### logo depois da PARTE 1 e antes de qualquer ###LOCAIS###, e depois
+contendo exatamente ###NOTAFISCAL### logo depois da PARTE 1 (e das tarefas, se houver) e antes de qualquer ###LOCAIS###, e depois
 dela um paragrafo curto, texto plano, dizendo quantas notas fiscais foram emitidas em $invoiceMonthLabel
 até hoje e o valor total somado (em euros), deixando claro que e um fechamento parcial do mes (a menos que
 hoje seja mesmo o ultimo dia dele). Nao invente numero nenhum: se a consulta do passo 4 falhar ou vier
@@ -165,7 +169,7 @@ Monte o recado matinal do grupo. Hoje e $dayLabel.
 
 Primeiro consulte, nesta ordem:
 1. calendar-gate__search_events com time_min "$dayStart" e time_max "$dayEnd", para os compromissos de hoje.
-2. As tarefas pendentes do Todoist para hoje e as que estao atrasadas.
+2. As tarefas pendentes do Todoist do projeto "Jaci", TODAS, com ou sem data, SEM as do subprojeto "Camping". Inclua as subtarefas (elas vem com parentId): agrupe cada uma sob a tarefa pai.
 3. places-oficina__places_search com updated_since "$yesterday" e limit 50, para os locais do Scholion
    (flores, restaurantes) que foram criados ou alterados desde ontem. Isso e sobre o REGISTO ter mudado,
    nao sobre quando a visita aconteceu — um local editado hoje aparece mesmo que a visita nele seja antiga.$invoiceStep
@@ -177,10 +181,24 @@ PARTE 1 — o recado de hoje (agenda + tarefas), na sua voz. Regras:
 - Depois de cumprimentar, diga que dia e hoje.
 - Texto plano, sem NENHUMA formatacao markdown: nada de asterisco para negrito, nada de sublinhado, nada de cabecalho. O Telegram recebe isso como texto cru e os asteriscos aparecem na tela. Para destacar, use emoji ou uma linha em branco.
 - Liste os compromissos com horario. Se nao houver nenhum, diga que a agenda esta livre.
-- Liste as tarefas pendentes. Se forem muitas, cite as mais importantes e diga quantas ficaram de fora.
+- NAO liste as tarefas aqui: elas vao em mensagens proprias (PARTE TAREFAS). A PARTE 1 e so cumprimento, dia e agenda.
 - Nao invente compromisso nem tarefa. Se uma ferramenta falhar, diga com todas as letras que nao conseguiu consultar aquilo.
-- Nao inclua curiosidade sobre plantas, os locais do Scholion, nem notas fiscais: cada um vai numa mensagem separada.
+- Nao inclua tarefas, curiosidade sobre plantas, os locais do Scholion, nem notas fiscais: cada um vai numa mensagem separada.
 - No maximo 2500 caracteres.
+
+PARTE TAREFAS — SOMENTE SE o passo 2 trouxe pelo menos uma tarefa pendente; se nao trouxe nenhuma, NAO escreva
+esta parte nem o separador. Vem logo depois da PARTE 1, ANTES de ###NOTAFISCAL### e de ###LOCAIS###.
+Escreva uma linha contendo exatamente ###TAREFAS### e, abaixo dela, UMA MENSAGEM POR GRUPO, na ordem abaixo,
+separadas por uma linha contendo exatamente ###TAREFA###. Todas em texto plano, sem markdown; omita o grupo
+que estiver vazio, sem escrever nada sobre ele. Cada mensagem comeca com o titulo do grupo:
+1. "⚠️ Tarefas atrasadas": as tarefas COM data anterior a hoje, cada uma com a data e ha quanto tempo venceu.
+2. "📅 Tarefas com data": as COM data entre $today e $weekEnd (inclusive), em ordem de data, cada uma com a data (e a hora, se tiver). As com data DEPOIS de $weekEnd NAO entram em lugar nenhum e nao devem ser mencionadas.
+3. "📝 Tarefas sem data": as SEM data.
+4. Depois, UMA MENSAGEM PARA CADA tarefa que tem subtarefas (parentId apontando para ela): comeca com
+   "📌 " e o titulo da tarefa, a data dela se tiver, uma linha em branco, e as subtarefas uma por linha com
+   "• ". Se os itens tiverem valores em euros, termine com uma linha "Total: X€" com a soma exata, e confira a
+   conta. Essa tarefa NAO aparece de novo nos grupos 1 a 3, nem as subtarefas dela. Se a propria tarefa tem data depois de $weekEnd, ela tambem fica de fora; sem data ou com data ate $weekEnd, entra.
+Subtarefa nunca aparece solta nos grupos 1 a 3. Nao invente tarefa, data nem valor.
 $invoicePart
 PARTE 2 — SOMENTE SE places_search trouxe pelo menos um resultado. Se nao trouxe nenhum, NAO escreva
 PARTE 2 nem a linha separadora abaixo — pare depois da parte 1.
@@ -262,7 +280,14 @@ $sections = @($text -split '(?m)^\s*###LOCAIS###\s*$', 2)
 $placesText = if ($sections.Count -gt 1 -and $sections[1].Trim()) { Strip-Markdown($sections[1].Trim()) } else { $null }
 
 $nfSections = @($sections[0] -split '(?m)^\s*###NOTAFISCAL###\s*$', 2)
-$briefingText = Strip-Markdown($nfSections[0].Trim())
+# The task messages sit between the agenda and the invoice: ###TAREFAS### opens
+# them, ###TAREFA### separates one message from the next. Same reasoning as
+# places: each group is its own message so none of them can reach Telegram's cap.
+$taskSections = @($nfSections[0] -split '(?m)^\s*###TAREFAS###\s*$', 2)
+$taskMessages = if ($taskSections.Count -gt 1 -and $taskSections[1].Trim()) {
+  @((Strip-Markdown($taskSections[1].Trim())) -split '(?m)^\s*###TAREFA###\s*$' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+} else { @() }
+$briefingText = Strip-Markdown($taskSections[0].Trim())
 $invoiceText = if ($nfSections.Count -gt 1 -and $nfSections[1].Trim()) { Strip-Markdown($nfSections[1].Trim()) } else { $null }
 if ($isInvoiceDay -and -not $invoiceText) {
   # Today is a trigger day but the reply carried no ###NOTAFISCAL### section —
@@ -278,8 +303,8 @@ $placeMessages = if ($placesText) {
 } else { @() }
 
 $tools = @($result.result.meta.toolSummary.tools) -join ", "
-Write-Log ("composed {0} chars (briefing) + {1} local message(s) + invoice message: {2}, tools used: {3}" -f `
-  $briefingText.Length, $placeMessages.Count, [bool]$invoiceText, $(if ($tools) { $tools } else { "none" }))
+Write-Log ("composed {0} chars (briefing) + {1} task message(s) + {2} local message(s) + invoice message: {3}, tools used: {4}" -f `
+  $briefingText.Length, $taskMessages.Count, $placeMessages.Count, [bool]$invoiceText, $(if ($tools) { $tools } else { "none" }))
 if (-not $tools) {
   # A briefing that reached no tool has no data in it. Say so in the log rather
   # than sending a cheerful empty message every morning without anyone noticing.
@@ -315,6 +340,12 @@ if ($parts.Count -gt 1) {
   }
 }
 
+# Tasks go right after the agenda, one message per group.
+$boldTitle = New-Object 'System.Collections.Generic.HashSet[string]'
+foreach ($taskMessage in $taskMessages) {
+  foreach ($chunk in @(Split-Message -Body $taskMessage -Limit $MaxChars)) { $parts += $chunk; [void]$boldTitle.Add($chunk) }
+}
+
 # The invoice total, on the 15th and the second-to-last day of the month, goes
 # out as its own message right after the briefing — same reasoning as places
 # and the curiosity: unrelated content doesn't share a message.
@@ -326,31 +357,59 @@ if ($invoiceText) { $parts += @(Split-Message -Body $invoiceText -Limit $MaxChar
 foreach ($placeMessage in $placeMessages) { $parts += @(Split-Message -Body $placeMessage -Limit $MaxChars) }
 
 # The curiosity is the last message of the sequence.
-if ($curiosityMessage) { $parts += $curiosityMessage }
+if ($curiosityMessage) { $parts += $curiosityMessage; [void]$boldTitle.Add($curiosityMessage) }
+
+# Telegram HTML: the model never writes tags. The text is escaped as a whole
+# (a "&" in a URL or a "<" in a passage would make Telegram reject the message)
+# and only then does the script add its own: a bold first line on the messages
+# that have a title, italics on a "Total:" line.
+function ConvertTo-TelegramHtml([string]$Text, [bool]$BoldFirstLine) {
+  # A delimiter the model left behind (a lone "###" or "###TAREFAS###") is noise, never content.
+  $Text = ($Text -replace '(?m)^[ \t]*###(?:[A-Z]+###)?[ \t]*\r?\n?', '').TrimEnd()
+  $h = $Text -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+  $lines = $h -split "`n"
+  if ($BoldFirstLine -and $lines[0].Trim()) { $lines[0] = "<b>$($lines[0].TrimEnd())</b>" }
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match '^Total:\s') { $lines[$i] = "<i>$($lines[$i].TrimEnd())</i>" }
+  }
+  return ($lines -join "`n")
+}
 
 if ($DryRun) {
-  Write-Log ("DRY RUN — {0} message(s), nothing sent" -f $parts.Count)
-  $parts | ForEach-Object { Write-Host "`n---------- message ----------`n$_" }
+  Write-Log ("DRY RUN — {0} message(s), nothing sent (shown as the HTML that would go out)" -f $parts.Count)
+  $parts | ForEach-Object { Write-Host "`n---------- message ----------`n$(ConvertTo-TelegramHtml $_ $boldTitle.Contains($_))" }
   exit 0
 }
 
 # ── deliver through GossipGate ──────────────────────────────────────────────
-$sent = 0
-foreach ($part in $parts) {
-  $payload = @{ message = $part }
+function Send-Gossip([string]$Message, [string]$ParseMode) {
+  $payload = @{ message = $Message }
+  if ($ParseMode) { $payload.parse_mode = $ParseMode }
   if ($Target) { $payload.target = $Target }
   # UTF-8 bytes, never a pwsh string: the pipeline mangles accents otherwise.
   $body = [System.Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 3 -Compress))
+  Invoke-RestMethod -Uri $GossipUrl -Method Post -Body $body `
+    -ContentType "application/json; charset=utf-8" `
+    -Headers @{ "X-Api-Key" = $GossipKey } | Out-Null
+}
+
+$sent = 0
+foreach ($part in $parts) {
   try {
-    Invoke-RestMethod -Uri $GossipUrl -Method Post -Body $body `
-      -ContentType "application/json; charset=utf-8" `
-      -Headers @{ "X-Api-Key" = $GossipKey } | Out-Null
+    Send-Gossip -Message (ConvertTo-TelegramHtml $part $boldTitle.Contains($part)) -ParseMode "HTML"
     $sent++
   } catch {
-    Write-Log ("FAILED to send message {0} of {1}: {2}" -f ($sent + 1), $parts.Count, $_.Exception.Message)
-    # The fact is only consumed below, so a failure here leaves it in the queue
-    # for tomorrow instead of burning it on a message nobody received.
-    exit 1
+    # If Telegram refused the HTML, the plain text still has to get through.
+    Write-Log ("HTML send failed for message {0} ({1}); retrying as plain text" -f ($sent + 1), $_.Exception.Message)
+    try {
+      Send-Gossip -Message $part
+      $sent++
+    } catch {
+      Write-Log ("FAILED to send message {0} of {1}: {2}" -f ($sent + 1), $parts.Count, $_.Exception.Message)
+      # The fact is only consumed below, so a failure here leaves it in the queue
+      # for tomorrow instead of burning it on a message nobody received.
+      exit 1
+    }
   }
   Start-Sleep -Milliseconds 400
 }
