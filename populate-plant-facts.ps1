@@ -98,7 +98,7 @@ function Get-WikipediaImage([string]$Title, [string]$Lang) {
   # The page's own lead image — already curated by Wikipedia editors as the
   # one photo that represents the article, which is a better bet than trying
   # to pick a "good" one out of the raw image gallery ourselves.
-  $url = "https://{0}.wikipedia.org/w/api.php?action=query&prop=pageimages&piprop=thumbnail&pithumbsize=1024&redirects=1&format=json&titles={1}" -f $Lang, [uri]::EscapeDataString($Title)
+  $url = "https://{0}.wikipedia.org/w/api.php?action=query&prop=pageimages&piprop=thumbnail&pithumbsize=640&redirects=1&format=json&titles={1}" -f $Lang, [uri]::EscapeDataString($Title)
   $r = Invoke-WikipediaApi -Url $url
   if (-not $r) { return $null }
   $page = $r.query.pages.PSObject.Properties.Value | Select-Object -First 1
@@ -284,6 +284,8 @@ $existing = @()
 if (Test-Path $FactsPath) { $existing += @((Get-Content $FactsPath -Raw -Encoding utf8 | ConvertFrom-Json).facts) }
 if (Test-Path $SentPath)  { $existing += @((Get-Content $SentPath  -Raw -Encoding utf8 | ConvertFrom-Json).sent) }
 $covered = @($existing | ForEach-Object { $_.source } | Where-Object { $_ })
+# Older entries have no plant/topic field, only the title inside the source line.
+$coveredTitles = @($existing | ForEach-Object { $_.plant, $_.topic, (($_.source -replace '^Wikipedia \(\w+\) — ', '') -replace ', trecho traduzido$', '') } | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() })
 
 function Get-UncoveredShuffled([string[]]$List) {
   @($List | Where-Object { $t = $_; -not ($covered | Where-Object { $_ -like "*$t*" }) } |
@@ -297,13 +299,14 @@ $pool = if ($Topic) { $Topic } else {
 
   # A lista "topics" (selvagem/agricola/arvores) e bem maior que "interior",
   # entao um sorteio unico sobre as duas juntas quase nunca cairia numa planta
-  # de casa. Intercalar — interior, selvagem, interior, selvagem... — garante
-  # que cada remessa tenha as duas, em vez de depender de sorte.
+  # de casa. Mas planta de casa rende, quase sempre, dica de cuidado ou "purifica
+  # o ar (NASA)", que cansa. Por isso a ordem e 1 de interior para cada 2
+  # selvagens: interior, selvagem, selvagem, interior, ...
   $interleaved = @()
-  $max = [Math]::Max($interiorPool.Count, $wildPool.Count)
-  for ($i = 0; $i -lt $max; $i++) {
-    if ($i -lt $interiorPool.Count) { $interleaved += $interiorPool[$i] }
-    if ($i -lt $wildPool.Count)     { $interleaved += $wildPool[$i] }
+  $i = 0; $w = 0
+  while ($i -lt $interiorPool.Count -or $w -lt $wildPool.Count) {
+    if ($i -lt $interiorPool.Count) { $interleaved += $interiorPool[$i++] }
+    for ($k = 0; $k -lt 2 -and $w -lt $wildPool.Count; $k++) { $interleaved += $wildPool[$w++] }
   }
   $interleaved
 }
@@ -323,8 +326,18 @@ foreach ($t in $pool) {
   if (-not $article) { Write-Host "  no usable article" -ForegroundColor Yellow; continue }
   Write-Host "  article: $($article.title) ($($article.lang), $($article.text.Length) chars)"
 
+  # The topic list holds the title we ASKED for; Wikipedia redirects it, so
+  # "Zamioculcas zamiifolia" comes back as "Zamioculcas" and "Theobroma cacao"
+  # as "Cacau", and the skip-list above (which matches the asked title against
+  # the stored source) never saw the repeat. Compare the RESOLVED title too.
+  if ($coveredTitles -contains $article.title.ToLowerInvariant()) {
+    Write-Host "  skipped: '$($article.title)' was already covered (redirect of '$t')" -ForegroundColor Yellow
+    continue
+  }
+
   $fact = Get-FactFromArticle -Article $article
   if (-not $fact) { continue }
+  $fact.topic = $t
 
   Start-Sleep -Milliseconds 500 # stay under Wikipedia's rate limit across the run
   $fact.image = Get-WikipediaImage -Title $article.title -Lang $article.lang
@@ -333,6 +346,7 @@ foreach ($t in $pool) {
   Write-Host "  coment: $($fact.comment)" -ForegroundColor Cyan
   Write-Host "  img  : $(if ($fact.image) { $fact.image } else { '(none found)' })"
   $added += $fact
+  $coveredTitles += $article.title.ToLowerInvariant()
 }
 
 if ($added.Count -eq 0) {
@@ -347,7 +361,7 @@ if ($Preview) {
 
 $current = @()
 if (Test-Path $FactsPath) { $current = @((Get-Content $FactsPath -Raw -Encoding utf8 | ConvertFrom-Json).facts) }
-$current += @($added | ForEach-Object { [ordered]@{ fact = $_.fact; original = $_.original; hook = $_.hook; comment = $_.comment; plant = $_.plant; source = $_.source; url = $_.url; image = $_.image } })
+$current += @($added | ForEach-Object { [ordered]@{ fact = $_.fact; original = $_.original; hook = $_.hook; comment = $_.comment; plant = $_.plant; topic = $_.topic; source = $_.source; url = $_.url; image = $_.image } })
 @{ facts = $current } | ConvertTo-Json -Depth 5 | Set-Content -Path $FactsPath -Encoding utf8
 
 Write-Host "`nAdded $($added.Count). Queue now holds $($current.Count) facts." -ForegroundColor Green

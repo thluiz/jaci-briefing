@@ -378,6 +378,7 @@ if ($fact) {
     source   = $fact.source
     url      = $fact.url
     image    = $fact.image
+    topic    = $fact.topic
   }
   @{ sent = $history } | ConvertTo-Json -Depth 5 | Set-Content -Path $SentPath -Encoding utf8
 
