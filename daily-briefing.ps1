@@ -29,7 +29,8 @@ param(
   [string]$Target,
   [string]$Agent = "oficina",
   [string]$Date,
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$IfNotSentToday
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,6 +78,17 @@ $yesterday = "{0:yyyy-MM-dd}" -f $now.AddDays(-1)
 # Computed here for the same reason as the windows above.
 $today   = "{0:yyyy-MM-dd}" -f $now
 $weekEnd = "{0:yyyy-MM-dd}" -f $now.AddDays(7)
+
+# ── already sent today? ─────────────────────────────────────────────────────
+# The 07:00 trigger is skipped when nobody is logged on (e.g. an overnight
+# Windows Update restart), so a second, at-logon trigger runs this with
+# -IfNotSentToday: it catches up on a missed briefing and does nothing on a day
+# the 07:00 run already went out. The marker is written only after a real send.
+$SentMarker = Join-Path $Root "state\last-sent.txt"
+if ($IfNotSentToday -and -not $Date -and (Test-Path $SentMarker) -and ((Get-Content $SentMarker -Raw).Trim() -eq $today)) {
+  Write-Log "briefing for $today already sent, nothing to do"
+  exit 0
+}
 
 $ptCulture = [System.Globalization.CultureInfo]::GetCultureInfo("pt-BR")
 $dayLabel  = $now.ToString("dddd, d 'de' MMMM 'de' yyyy", $ptCulture)
@@ -415,6 +427,10 @@ foreach ($part in $parts) {
 }
 
 Write-Log ("sent {0} message(s) via GossipGate{1}" -f $sent, $(if ($Target) { " to '$Target'" } else { " (default)" }))
+if (-not $Date) {
+  New-Item -ItemType Directory -Force -Path (Split-Path $SentMarker) | Out-Null
+  Set-Content -Path $SentMarker -Value $today -Encoding ascii
+}
 
 # ── consume the fact, only now that it really went out ──────────────────────
 # Removing it before the send would silently burn a fact whenever GossipGate is
